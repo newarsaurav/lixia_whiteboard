@@ -92,7 +92,7 @@
 
 <div class="row">
   <input type="text" id="promptInput"
-    placeholder='Try: "draw a cat"  or  "chart last 5 days temp of Kathmandu"  or  "map of Nepal"'>
+    placeholder='Try: "draw a flowchart"  or  "chart last 5 days temp of Kathmandu"  or  "map of Nepal"'>
   <button id="drawBtn">Draw</button>
   <button id="clearBtn">Clear</button>
   <label class="speed-label">
@@ -116,9 +116,9 @@
 </div>
 
 <p class="hint">
-  Everything you type is drawn on this board — real pencil-sketch images, diagrams, and
-  charts all need <span>server.py</span> running on :8000 (maps also fetch real OSM
-  boundaries; weather charts fetch real Open-Meteo data)
+  Everything you type is drawn on this board — diagrams, sketches, and charts all need
+  <span>server.py</span> running on :8000 (maps also fetch real OSM boundaries; weather
+  charts fetch real Open-Meteo data)
 </p>
 
 <!-- D3 + TopoJSON for maps -->
@@ -135,7 +135,6 @@ const BASE_TRACE = 700;   // ms at 1x for shapes
 const BASE_SKETCH= 550;   // ms at 1x per freeform sketch path
 const BASE_MAP   = 3500;  // ms at 1x for map trace
 const BASE_CHART = 900;   // ms at 1x per chart series/axis trace
-const BASE_IMAGE = 1800;  // ms at 1x for a real sketch image reveal
 
 /* ════════════════════════════════════════════════════════
    REFS
@@ -155,7 +154,6 @@ const traceDur  = ()  => BASE_TRACE / speed();
 const sketchDur = ()  => BASE_SKETCH / speed();
 const mapDur    = ()  => BASE_MAP   / speed();
 const chartDur  = ()  => BASE_CHART / speed();
-const imageDur  = ()  => BASE_IMAGE / speed();
 const setStatus = (t) => { statusEl.textContent = t; };
 
 speedSlider.addEventListener("input", () => { speedValEl.textContent = speed() + "x"; });
@@ -167,7 +165,6 @@ function clearStage() {
   shapesG.innerHTML    = "";
   connectorsG.innerHTML= "";
   pencilLayer.innerHTML= "";
-  document.querySelectorAll("#stage defs clipPath").forEach(el => el.remove());
 }
 clearBtn.addEventListener("click", clearStage);
 
@@ -556,89 +553,6 @@ async function drawChart(chart) {
 }
 
 /* ════════════════════════════════════════════════════════
-   REAL SKETCH IMAGE (actual picture from the Nano Banana image model,
-   styled as a hand-drawn pencil sketch). Revealed with a clip-path wipe
-   while the pencil zigzags across it, like someone shading it in.
-════════════════════════════════════════════════════════ */
-function drawSketchImage(item) {
-  return new Promise((resolve) => {
-    if (!item.data) { resolve(); return; }
-    const svgNS = "http://www.w3.org/2000/svg";
-    const mime = item.mime_type || "image/png";
-    const href = `data:${mime};base64,${item.data}`;
-
-    const boxW = 440, boxH = 440;
-    const x = (SVG_W - boxW) / 2;
-    const y = 56;
-
-    const clipId = "clip_" + item.id;
-    const defs = document.querySelector("#stage defs");
-    const clipPath = document.createElementNS(svgNS, "clipPath");
-    clipPath.setAttribute("id", clipId);
-    const clipRect = document.createElementNS(svgNS, "rect");
-    clipRect.setAttribute("x", x); clipRect.setAttribute("y", y);
-    clipRect.setAttribute("width", 0); clipRect.setAttribute("height", boxH);
-    clipPath.appendChild(clipRect);
-    defs.appendChild(clipPath);
-
-    const frame = document.createElementNS(svgNS, "rect");
-    frame.setAttribute("x", x); frame.setAttribute("y", y);
-    frame.setAttribute("width", boxW); frame.setAttribute("height", boxH);
-    frame.setAttribute("fill", "#ffffff"); frame.setAttribute("fill-opacity", "0.02");
-    frame.setAttribute("stroke", "#2a2e38"); frame.setAttribute("stroke-width", "1.5");
-    frame.setAttribute("rx", "4");
-    shapesG.appendChild(frame);
-
-    const imgEl = document.createElementNS(svgNS, "image");
-    imgEl.setAttributeNS("http://www.w3.org/1999/xlink", "href", href);
-    imgEl.setAttribute("href", href);
-    imgEl.setAttribute("x", x); imgEl.setAttribute("y", y);
-    imgEl.setAttribute("width", boxW); imgEl.setAttribute("height", boxH);
-    imgEl.setAttribute("preserveAspectRatio", "xMidYMid slice");
-    imgEl.setAttribute("clip-path", `url(#${clipId})`);
-    shapesG.appendChild(imgEl);
-
-    let caption = null;
-    if (item.caption || item.subject) {
-      caption = document.createElementNS(svgNS, "text");
-      caption.setAttribute("x", x + boxW / 2);
-      caption.setAttribute("y", y + boxH + 22);
-      caption.setAttribute("class", "sketch-lbl");
-      caption.style.opacity = "0"; caption.style.transition = "opacity 300ms ease";
-      caption.textContent = item.caption || item.subject;
-      shapesG.appendChild(caption);
-    }
-
-    const pencil = makePencil();
-    pencilLayer.appendChild(pencil);
-
-    const durMs = imageDur();
-    const t0 = performance.now();
-    function tick(now) {
-      const t = Math.min(1, (now - t0) / durMs);
-      const revealW = t * boxW;
-      clipRect.setAttribute("width", revealW);
-
-      // zigzag shading motion synced to the reveal edge
-      const zig = Math.sin(t * Math.PI * 12);
-      const px = x + revealW;
-      const py = y + boxH / 2 + zig * (boxH / 2 - 8);
-      pencil.setAttribute("transform", `translate(${px},${py}) rotate(${zig * 35 + 90})`);
-
-      if (t < 1) {
-        requestAnimationFrame(tick);
-      } else {
-        clipRect.setAttribute("width", boxW);
-        pencil.remove();
-        if (caption) caption.style.opacity = "1";
-        resolve();
-      }
-    }
-    requestAnimationFrame(tick);
-  });
-}
-
-/* ════════════════════════════════════════════════════════
    MAP DRAWING — real OSM boundary
    Strategy:
      1. Nominatim search → get OSM relation ID
@@ -904,10 +818,6 @@ async function drawShapes(prompt) {
       const fp=placed[c.from_shape_id], tp=placed[c.to_shape_id];
       if (fp&&tp) { drawConnector(fp,tp,c.label); await sleep(350/speed()); }
     }
-    for (const img of (data.images||[])) {
-      await drawSketchImage(img);
-      await sleep(80);
-    }
     for (const p of (data.paths||[])) {
       await drawSketchPath(p);
       await sleep(60);
@@ -917,7 +827,7 @@ async function drawShapes(prompt) {
       await sleep(60);
     }
 
-    const nothingDrawn = !(data.shapes?.length || data.paths?.length || data.charts?.length || data.images?.length);
+    const nothingDrawn = !(data.shapes?.length || data.paths?.length || data.charts?.length);
     setStatus(data.assistant_text || (nothingDrawn ? "no drawing returned" : "done ✓"));
   } catch(e) {
     setStatus(`Error: ${e.message} — is server.py running on :8000?`);
