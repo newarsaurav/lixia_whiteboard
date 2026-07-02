@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Whiteboard (Text Only)</title>
+<style>
+  body {
+    margin: 0;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    background: #0f1115;
+    color: #e6e8ec;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px 40px;
+  }
+  .row { display: flex; gap: 8px; width: 100%; max-width: 720px; margin-bottom: 16px; }
+  input {
+    flex: 1;
+    background: #171a21;
+    color: #e6e8ec;
+    border: 1px solid #2a2e38;
+    border-radius: 6px;
+    padding: 9px 12px;
+    font-family: inherit;
+    font-size: 13px;
+  }
+  button {
+    background: #171a21;
+    color: #e6e8ec;
+    border: 1px solid #2a2e38;
+    border-radius: 6px;
+    padding: 9px 16px;
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  button:hover { border-color: #4f8ef7; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  #status { font-size: 12px; color: #8b93a3; margin-bottom: 12px; min-height: 16px; }
+  #stage-wrap { background: #171a21; border: 1px solid #2a2e38; border-radius: 10px; padding: 8px; }
+  svg { display: block; background: #0c0e12; border-radius: 6px; }
+  .shape-label { fill: #f4f6f9; font-size: 13px; text-anchor: middle; dominant-baseline: middle; }
+  .connector-label { fill: #8b93a3; font-size: 11px; text-anchor: middle; }
+</style>
+</head>
+<body>
+
+<div class="row">
+  <input type="text" id="promptInput" placeholder='Type what to draw, e.g. "draw a 3-step approval flow"'>
+  <button id="drawBtn">Draw</button>
+  <button id="clearBtn">Clear</button>
+</div>
+<div id="status"></div>
+
+<div id="stage-wrap">
+  <svg id="stage" viewBox="0 0 960 640" width="960" height="640">
+    <defs>
+      <marker id="arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+        <path d="M0,0 L10,4 L0,8 Z" fill="#6b7280"></path>
+      </marker>
+    </defs>
+    <g id="connectors"></g>
+    <g id="shapes"></g>
+  </svg>
+</div>
+
+<script>
+const SERVER_URL = "http://localhost:8000/draw";
+const GRID_PX = 40;
+
+const stage = document.getElementById("stage");
+const shapesG = document.getElementById("shapes");
+const connectorsG = document.getElementById("connectors");
+const promptInput = document.getElementById("promptInput");
+const drawBtn = document.getElementById("drawBtn");
+const clearBtn = document.getElementById("clearBtn");
+const statusEl = document.getElementById("status");
+
+function setStatus(text) { statusEl.textContent = text; }
+
+function clearStage() {
+  shapesG.innerHTML = "";
+  connectorsG.innerHTML = "";
+}
+
+function gridToPx(s) {
+  return {
+    x: s.grid_x * GRID_PX,
+    y: s.grid_y * GRID_PX,
+    w: s.grid_width * GRID_PX,
+    h: s.grid_height * GRID_PX,
+  };
+}
+
+function center(px) {
+  return { cx: px.x + px.w / 2, cy: px.y + px.h / 2 };
+}
+
+function outlinePath(type, px) {
+  const c = center(px);
+  if (type === "rect") {
+    return `M ${px.x},${px.y} L ${px.x + px.w},${px.y} L ${px.x + px.w},${px.y + px.h} L ${px.x},${px.y + px.h} Z`;
+  }
+  if (type === "diamond") {
+    return `M ${c.cx},${px.y} L ${px.x + px.w},${c.cy} L ${c.cx},${px.y + px.h} L ${px.x},${c.cy} Z`;
+  }
+  // ellipse
+  const rx = px.w / 2, ry = px.h / 2;
+  return `M ${c.cx - rx},${c.cy} A ${rx},${ry} 0 1 0 ${c.cx + rx},${c.cy} A ${rx},${ry} 0 1 0 ${c.cx - rx},${c.cy} Z`;
+}
+
+function drawShape(shape) {
+  const px = gridToPx(shape);
+  const d = outlinePath(shape.shape_type, px);
+
+  const fillEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  fillEl.setAttribute("d", d);
+  fillEl.setAttribute("fill", shape.fill || "#4f8ef7");
+  fillEl.setAttribute("fill-opacity", "0.85");
+  fillEl.setAttribute("stroke", "#10131a");
+  fillEl.setAttribute("stroke-width", "2");
+  shapesG.appendChild(fillEl);
+
+  if (shape.label) {
+    const c = center(px);
+    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    text.setAttribute("x", c.cx);
+    text.setAttribute("y", c.cy);
+    text.setAttribute("class", "shape-label");
+    text.textContent = shape.label;
+    shapesG.appendChild(text);
+  }
+
+  return px;
+}
+
+function edgePoint(px, towardCx, towardCy) {
+  const c = center(px);
+  const dx = towardCx - c.cx;
+  const dy = towardCy - c.cy;
+  const scaleX = dx === 0 ? Infinity : (px.w / 2) / Math.abs(dx);
+  const scaleY = dy === 0 ? Infinity : (px.h / 2) / Math.abs(dy);
+  const scale = Math.min(scaleX, scaleY);
+  return { x: c.cx + dx * scale, y: c.cy + dy * scale };
+}
+
+function drawConnector(fromPx, toPx, label) {
+  const fromC = center(fromPx);
+  const toC = center(toPx);
+  const start = edgePoint(fromPx, toC.cx, toC.cy);
+  const end = edgePoint(toPx, fromC.cx, fromC.cy);
+
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  line.setAttribute("x1", start.x);
+  line.setAttribute("y1", start.y);
+  line.setAttribute("x2", end.x);
+  line.setAttribute("y2", end.y);
+  line.setAttribute("stroke", "#6b7280");
+  line.setAttribute("stroke-width", "2");
+  line.setAttribute("marker-end", "url(#arrowhead)");
+  connectorsG.appendChild(line);
+
+  if (label) {
+    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    text.setAttribute("x", (start.x + end.x) / 2);
+    text.setAttribute("y", (start.y + end.y) / 2 - 6);
+    text.setAttribute("class", "connector-label");
+    text.textContent = label;
+    connectorsG.appendChild(text);
+  }
+}
+
+async function draw() {
+  const prompt = promptInput.value.trim();
+  if (!prompt) return;
+
+  drawBtn.disabled = true;
+  setStatus("thinking…");
+  clearStage();
+
+  try {
+    const res = await fetch(SERVER_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+    });
+    if (!res.ok) throw new Error(`server returned ${res.status}`);
+    const data = await res.json();
+
+    const placed = {};
+    (data.shapes || []).forEach((s) => { placed[s.id] = drawShape(s); });
+    (data.connectors || []).forEach((c) => {
+      const fromPx = placed[c.from_shape_id];
+      const toPx = placed[c.to_shape_id];
+      if (fromPx && toPx) drawConnector(fromPx, toPx, c.label);
+    });
+
+    setStatus(data.assistant_text || (data.shapes.length ? "done" : "no shapes returned"));
+  } catch (err) {
+    setStatus(`Error: ${err.message} (is server.py running on localhost:8000?)`);
+  } finally {
+    drawBtn.disabled = false;
+  }
+}
+
+drawBtn.addEventListener("click", draw);
+clearBtn.addEventListener("click", clearStage);
+promptInput.addEventListener("keydown", (e) => { if (e.key === "Enter") draw(); });
+</script>
+</body>
+</html>

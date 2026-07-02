@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Whiteboard Sketch Presets</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --line: #2a2e38;
+    --text: #e6e8ec;
+    --muted: #8b93a3;
+    --accent: #4f8ef7;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px 40px;
+  }
+  h1 {
+    font-size: 14px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+    margin: 0 0 16px;
+  }
+  .controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 18px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  select {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-family: inherit;
+    font-size: 13px;
+    min-width: 240px;
+  }
+  button {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  .speed-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .speed-label input[type="range"] {
+    accent-color: var(--accent);
+    width: 110px;
+  }
+  #speedValue {
+    color: var(--text);
+    min-width: 28px;
+    display: inline-block;
+  }
+  #customPanel {
+    width: 100%;
+    max-width: 720px;
+    margin-bottom: 14px;
+  }
+  #customJson {
+    width: 100%;
+    height: 220px;
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px;
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1.5;
+    resize: vertical;
+  }
+  #customJson:focus { outline: none; border-color: var(--accent); }
+  .custom-row {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 4px;
+  }
+  .json-error {
+    color: #f75f5f;
+    font-size: 11px;
+  }
+  #stage-wrap {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 8px;
+  }
+  svg { display: block; background: #0c0e12; border-radius: 6px; }
+  .shape-rect { rx: 6; }
+  .shape-label {
+    fill: #f4f6f9;
+    font-size: 13px;
+    text-anchor: middle;
+    dominant-baseline: middle;
+    pointer-events: none;
+  }
+  .connector { stroke: #6b7280; stroke-width: 2; fill: none; }
+  .connector-label {
+    fill: var(--muted);
+    font-size: 11px;
+    text-anchor: middle;
+  }
+  marker#arrowhead path { fill: #6b7280; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 12px; max-width: 560px; text-align: center; line-height: 1.5; }
+</style>
+</head>
+<body>
+
+<h1>Sketch Presets</h1>
+<div class="controls">
+  <select id="presetSelect"></select>
+  <button id="drawBtn">Draw</button>
+  <button id="clearBtn">Clear</button>
+  <label class="speed-label">
+    Speed: <span id="speedValue">1x</span>
+    <input type="range" id="speedSlider" min="0.25" max="3" step="0.25" value="1">
+  </label>
+</div>
+
+<div id="customPanel" style="display:none;">
+  <textarea id="customJson" spellcheck="false"></textarea>
+  <div class="custom-row">
+    <span id="jsonError" class="json-error"></span>
+  </div>
+</div>
+
+<div id="stage-wrap">
+  <svg id="stage" viewBox="0 0 960 540" width="960" height="540">
+    <defs>
+      <marker id="arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+        <path d="M0,0 L10,4 L0,8 Z"></path>
+      </marker>
+    </defs>
+    <g id="connectors"></g>
+    <g id="shapes"></g>
+  </svg>
+</div>
+
+<p class="hint">
+  No AI call here — this picks a preset "scene" (the same shape/connector schema
+  the Gemini backend would emit) and renders it directly. Swap the PRESETS object
+  for real model output later and the renderer doesn't change.
+</p>
+
+<script>
+const GRID_PX = 36;
+
+// Each preset uses the same schema as the Python tool calls:
+// shapes: {id, type, gx, gy, gw, gh, label, fill}
+// connectors: {from, to, label}
+const PRESETS = {
+  circle_only: {
+    name: "Circle Only",
+    shapes: [
+      { id: "c1", type: "ellipse", gx: 10, gy: 5, gw: 6, gh: 6, label: "", fill: "#4f8ef7" },
+    ],
+    connectors: [],
+  },
+  rectangle_only: {
+    name: "Rectangle Only",
+    shapes: [
+      { id: "r1", type: "rect", gx: 9, gy: 5, gw: 8, gh: 5, label: "", fill: "#4f8ef7" },
+    ],
+    connectors: [],
+  },
+  diamond_only: {
+    name: "Diamond Only",
+    shapes: [
+      { id: "d1", type: "diamond", gx: 9, gy: 5, gw: 8, gh: 5, label: "", fill: "#4f8ef7" },
+    ],
+    connectors: [],
+  },
+  flowchart: {
+    name: "Simple Flowchart",
+    shapes: [
+      { id: "s1", type: "rect",    gx: 9,  gy: 1,  gw: 6, gh: 2, label: "Start",        fill: "#4f8ef7" },
+      { id: "s2", type: "diamond", gx: 8,  gy: 5,  gw: 8, gh: 3, label: "Valid input?",  fill: "#f7b84f" },
+      { id: "s3", type: "rect",    gx: 1,  gy: 10, gw: 6, gh: 2, label: "Show error",   fill: "#f75f5f" },
+      { id: "s4", type: "rect",    gx: 15, gy: 10, gw: 6, gh: 2, label: "Process data", fill: "#4fd17e" },
+      { id: "s5", type: "rect",    gx: 9,  gy: 14, gw: 6, gh: 2, label: "End",          fill: "#4f8ef7" },
+    ],
+    connectors: [
+      { from: "s1", to: "s2" },
+      { from: "s2", to: "s3", label: "no" },
+      { from: "s2", to: "s4", label: "yes" },
+      { from: "s4", to: "s5" },
+    ],
+  },
+  orgchart: {
+    name: "Mini Org Chart",
+    shapes: [
+      { id: "a", type: "rect", gx: 9,  gy: 1, gw: 6, gh: 2, label: "CEO",       fill: "#4f8ef7" },
+      { id: "b", type: "rect", gx: 2,  gy: 6, gw: 6, gh: 2, label: "Eng Lead",  fill: "#4fd17e" },
+      { id: "c", type: "rect", gx: 11, gy: 6, gw: 6, gh: 2, label: "Design Lead", fill: "#4fd17e" },
+      { id: "d", type: "rect", gx: 19, gy: 6, gw: 6, gh: 2, label: "Ops Lead",  fill: "#4fd17e" },
+    ],
+    connectors: [
+      { from: "a", to: "b" },
+      { from: "a", to: "c" },
+      { from: "a", to: "d" },
+    ],
+  },
+  shapes_demo: {
+    name: "Shape Primitives Demo",
+    shapes: [
+      { id: "r", type: "rect",    gx: 1,  gy: 2, gw: 6, gh: 4, label: "Rect",    fill: "#4f8ef7" },
+      { id: "e", type: "ellipse", gx: 9,  gy: 2, gw: 6, gh: 4, label: "Ellipse", fill: "#f7b84f" },
+      { id: "di", type: "diamond",gx: 17, gy: 2, gw: 6, gh: 4, label: "Diamond", fill: "#4fd17e" },
+      { id: "r2", type: "rect",   gx: 9,  gy: 9, gw: 6, gh: 3, label: "Linked",  fill: "#c084fc" },
+    ],
+    connectors: [
+      { from: "e", to: "r2", label: "relates to" },
+    ],
+  },
+};
+
+const select = document.getElementById("presetSelect");
+const drawBtn = document.getElementById("drawBtn");
+const clearBtn = document.getElementById("clearBtn");
+const speedSlider = document.getElementById("speedSlider");
+const speedValue = document.getElementById("speedValue");
+const shapesG = document.getElementById("shapes");
+const connectorsG = document.getElementById("connectors");
+
+const BASE_SKETCH_DURATION = 650; // ms, at 1x speed
+const BASE_STAGGER = 750;         // ms, at 1x speed
+
+function currentSpeed() {
+  return parseFloat(speedSlider.value); // e.g. 0.25 (slow) .. 3 (fast)
+}
+
+speedSlider.addEventListener("input", () => {
+  speedValue.textContent = `${currentSpeed()}x`;
+});
+
+for (const [key, preset] of Object.entries(PRESETS)) {
+  const opt = document.createElement("option");
+  opt.value = key;
+  opt.textContent = preset.name;
+  select.appendChild(opt);
+}
+const customOpt = document.createElement("option");
+customOpt.value = "__custom__";
+customOpt.textContent = "✏️ Custom JSON…";
+select.appendChild(customOpt);
+
+const customPanel = document.getElementById("customPanel");
+const customJsonInput = document.getElementById("customJson");
+const jsonError = document.getElementById("jsonError");
+
+const EXAMPLE_JSON = {
+  shapes: [
+    { id: "s1", type: "rect", gx: 9, gy: 2, gw: 6, gh: 2, label: "My Box", fill: "#4f8ef7" },
+    { id: "s2", type: "ellipse", gx: 9, gy: 7, gw: 6, gh: 4, label: "My Circle", fill: "#f7b84f" },
+  ],
+  connectors: [
+    { from: "s1", to: "s2", label: "links to" },
+  ],
+};
+customJsonInput.value = JSON.stringify(EXAMPLE_JSON, null, 2);
+
+function updateCustomPanelVisibility() {
+  customPanel.style.display = select.value === "__custom__" ? "block" : "none";
+  jsonError.textContent = "";
+}
+
+// Validates a parsed scene against the same shape/connector schema the
+// Python backend's pydantic models enforce, so bad input fails loudly
+// here instead of producing a broken drawing.
+function validateScene(scene) {
+  if (!scene || typeof scene !== "object") throw new Error("scene must be an object");
+  if (!Array.isArray(scene.shapes)) throw new Error("'shapes' must be an array");
+  const validShapeTypes = ["rect", "ellipse", "diamond"];
+  const ids = new Set();
+
+  scene.shapes.forEach((s, i) => {
+    if (!s.id) throw new Error(`shapes[${i}] missing 'id'`);
+    if (ids.has(s.id)) throw new Error(`duplicate shape id '${s.id}'`);
+    ids.add(s.id);
+    if (!validShapeTypes.includes(s.type)) {
+      throw new Error(`shapes[${i}] type must be one of ${validShapeTypes.join(", ")}`);
+    }
+    for (const field of ["gx", "gy", "gw", "gh"]) {
+      if (typeof s[field] !== "number") throw new Error(`shapes[${i}].${field} must be a number`);
+    }
+  });
+
+  if (scene.connectors) {
+    if (!Array.isArray(scene.connectors)) throw new Error("'connectors' must be an array");
+    scene.connectors.forEach((c, i) => {
+      if (!ids.has(c.from)) throw new Error(`connectors[${i}].from references unknown id '${c.from}'`);
+      if (!ids.has(c.to)) throw new Error(`connectors[${i}].to references unknown id '${c.to}'`);
+    });
+  } else {
+    scene.connectors = [];
+  }
+  return scene;
+}
+
+select.addEventListener("change", () => {
+  updateCustomPanelVisibility();
+  if (select.value !== "__custom__") drawPreset(select.value);
+});
+updateCustomPanelVisibility();
+
+function clearStage() {
+  shapesG.innerHTML = "";
+  connectorsG.innerHTML = "";
+}
+
+function shapeToPx(s) {
+  return {
+    x: s.gx * GRID_PX,
+    y: s.gy * GRID_PX,
+    w: s.gw * GRID_PX,
+    h: s.gh * GRID_PX,
+  };
+}
+
+function shapeCenter(px) {
+  return { cx: px.x + px.w / 2, cy: px.y + px.h / 2 };
+}
+
+// Build an SVG path "d" string that outlines the shape (used both for the
+// stroke-draw animation and as the track the pencil icon follows).
+function shapeOutlinePath(s, px) {
+  const c = shapeCenter(px);
+  if (s.type === "rect") {
+    return `M ${px.x},${px.y} L ${px.x + px.w},${px.y} L ${px.x + px.w},${px.y + px.h} L ${px.x},${px.y + px.h} Z`;
+  }
+  if (s.type === "diamond") {
+    return `M ${c.cx},${px.y} L ${px.x + px.w},${c.cy} L ${c.cx},${px.y + px.h} L ${px.x},${c.cy} Z`;
+  }
+  if (s.type === "ellipse") {
+    const rx = px.w / 2, ry = px.h / 2;
+    return `M ${c.cx - rx},${c.cy} A ${rx},${ry} 0 1 0 ${c.cx + rx},${c.cy} A ${rx},${ry} 0 1 0 ${c.cx - rx},${c.cy} Z`;
+  }
+  return "";
+}
+
+// Pencil icon: small group with a tip + body, rotated to follow the path's
+// tangent direction as it travels.
+function makePencilIcon() {
+  const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  g.innerHTML = `
+    <g transform="translate(-2,-16)">
+      <polygon points="0,16 4,16 2,20" fill="#f4c98b" stroke="#10131a" stroke-width="0.5"/>
+      <rect x="-0.5" y="2" width="5" height="14" rx="1" fill="#f7d9a8" stroke="#10131a" stroke-width="0.5"/>
+      <rect x="-0.5" y="-1" width="5" height="3" rx="0.5" fill="#e3675c"/>
+    </g>
+  `;
+  g.style.filter = "drop-shadow(0 1px 2px rgba(0,0,0,0.5))";
+  return g;
+}
+
+function animatePathDraw(pathEl, pencilLayer, durationMs, onDone) {
+  const length = pathEl.getTotalLength();
+  pathEl.style.strokeDasharray = length;
+  pathEl.style.strokeDashoffset = length;
+
+  const pencil = makePencilIcon();
+  pencilLayer.appendChild(pencil);
+
+  const start = performance.now();
+  function tick(now) {
+    const t = Math.min(1, (now - start) / durationMs);
+    const eased = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; // ease-in-out
+    const drawLen = eased * length;
+    pathEl.style.strokeDashoffset = length - drawLen;
+
+    const pt = pathEl.getPointAtLength(Math.min(drawLen, length - 0.01));
+    const ptNext = pathEl.getPointAtLength(Math.min(drawLen + 1, length));
+    const angle = Math.atan2(ptNext.y - pt.y, ptNext.x - pt.x) * (180 / Math.PI);
+    pencil.setAttribute("transform", `translate(${pt.x},${pt.y}) rotate(${angle + 90})`);
+
+    if (t < 1) {
+      requestAnimationFrame(tick);
+    } else {
+      pencil.remove();
+      if (onDone) onDone();
+    }
+  }
+  requestAnimationFrame(tick);
+}
+
+function drawShape(s, delay) {
+  const px = shapeToPx(s);
+  const d = shapeOutlinePath(s, px);
+
+  const fillEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  fillEl.setAttribute("d", d);
+  fillEl.setAttribute("fill", s.fill || "#4f8ef7");
+  fillEl.setAttribute("fill-opacity", "0");
+  fillEl.style.transition = "fill-opacity 300ms ease";
+
+  const strokeEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  strokeEl.setAttribute("d", d);
+  strokeEl.setAttribute("fill", "none");
+  strokeEl.setAttribute("stroke", "#10131a");
+  strokeEl.setAttribute("stroke-width", "2");
+  strokeEl.setAttribute("stroke-linecap", "round");
+  strokeEl.setAttribute("stroke-linejoin", "round");
+
+  const labelText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+  if (s.label) {
+    const c = shapeCenter(px);
+    labelText.setAttribute("x", c.cx);
+    labelText.setAttribute("y", c.cy);
+    labelText.setAttribute("class", "shape-label");
+    labelText.textContent = s.label;
+    labelText.style.opacity = "0";
+    labelText.style.transition = "opacity 200ms ease";
+  }
+
+  shapesG.appendChild(fillEl);
+  shapesG.appendChild(strokeEl);
+  if (s.label) shapesG.appendChild(labelText);
+
+  setTimeout(() => {
+    const sketchDuration = BASE_SKETCH_DURATION / currentSpeed();
+    animatePathDraw(strokeEl, shapesG, sketchDuration, () => {
+      fillEl.setAttribute("fill-opacity", "0.85");
+      if (s.label) labelText.style.opacity = "1";
+    });
+  }, delay);
+
+  return px;
+}
+
+function edgePoint(px, towardCx, towardCy) {
+  const c = shapeCenter(px);
+  const dx = towardCx - c.cx;
+  const dy = towardCy - c.cy;
+  const scaleX = dx === 0 ? Infinity : (px.w / 2) / Math.abs(dx);
+  const scaleY = dy === 0 ? Infinity : (px.h / 2) / Math.abs(dy);
+  const scale = Math.min(scaleX, scaleY);
+  return { x: c.cx + dx * scale, y: c.cy + dy * scale };
+}
+
+function drawConnector(fromPx, toPx, label, delay) {
+  const fromC = shapeCenter(fromPx);
+  const toC = shapeCenter(toPx);
+  const start = edgePoint(fromPx, toC.cx, toC.cy);
+  const end = edgePoint(toPx, fromC.cx, fromC.cy);
+
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  line.setAttribute("x1", start.x);
+  line.setAttribute("y1", start.y);
+  line.setAttribute("x2", start.x);
+  line.setAttribute("y2", start.y);
+  line.setAttribute("class", "connector");
+  line.setAttribute("marker-end", "url(#arrowhead)");
+  line.style.transition = `all ${260 / currentSpeed()}ms ease`;
+  connectorsG.appendChild(line);
+
+  setTimeout(() => {
+    line.setAttribute("x2", end.x);
+    line.setAttribute("y2", end.y);
+  }, delay);
+
+  if (label) {
+    const midX = (start.x + end.x) / 2;
+    const midY = (start.y + end.y) / 2;
+    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    text.setAttribute("x", midX);
+    text.setAttribute("y", midY - 6);
+    text.setAttribute("class", "connector-label");
+    text.textContent = label;
+    text.style.opacity = "0";
+    text.style.transition = "opacity 200ms ease";
+    connectorsG.appendChild(text);
+    setTimeout(() => { text.style.opacity = "1"; }, delay + 150);
+  }
+}
+
+function drawPreset(key) {
+  clearStage();
+  jsonError.textContent = "";
+
+  let scene;
+  if (key === "__custom__") {
+    try {
+      scene = validateScene(JSON.parse(customJsonInput.value));
+    } catch (err) {
+      jsonError.textContent = `Invalid scene: ${err.message}`;
+      return;
+    }
+  } else {
+    scene = PRESETS[key];
+  }
+  if (!scene) return;
+
+  const placed = {};
+  let delay = 0;
+  const STAGGER = BASE_STAGGER / currentSpeed(); // roughly one pencil-draw duration, so shapes draw one at a time
+
+  scene.shapes.forEach((s) => {
+    placed[s.id] = drawShape(s, delay);
+    delay += STAGGER;
+  });
+
+  scene.connectors.forEach((c) => {
+    const fromPx = placed[c.from];
+    const toPx = placed[c.to];
+    if (fromPx && toPx) {
+      drawConnector(fromPx, toPx, c.label, delay);
+      delay += 60;
+    }
+  });
+}
+
+drawBtn.addEventListener("click", () => drawPreset(select.value));
+clearBtn.addEventListener("click", clearStage);
+
+// draw the first preset on load
+drawPreset(select.value);
+</script>
+</body>
+</html>
